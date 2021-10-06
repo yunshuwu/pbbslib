@@ -361,12 +361,10 @@ void scan_inplace__ (uint32_t* in, uint32_t n) {
 }
 
 void uniform_generator_int64_ (pbbs::sequence<mypair<uint64_t, uint64_t>>& A, // mypair<uint64_t, uint64_t>* A, 
-                               int n, uint64_t uniform_max_range) {
+                               int n, uint64_t uniform_max) {
     parallel_for (0, n, [&] (uint32_t i){
-        // in order to put all keys in range [0, uniform_max_range]
-        A[i].first = pbbs::hash64_2(i) % uniform_max_range; 
-        if (A[i].first > uniform_max_range) A[i].first -= uniform_max_range;
-        if (A[i].first > uniform_max_range) cout << "wrong..." << endl;
+        // in order to have at most uniform_max kinds of keys
+        A[i].first = pbbs::hash64_2(i) % uniform_max; 
         A[i].first = pbbs::hash64_2(A[i].first);
         A[i].second = pbbs::hash64_2(i);
     }, 1);
@@ -477,7 +475,6 @@ void zipfian_generator_int64_ (pbbs::sequence<mypair<uint64_t, uint64_t>>& A, //
 
 template<typename T>
 double t_sort_outplace_unstable(size_t n, const std::string distribution, const std::string para, bool check) {
-  // pbbs::random r(0);
   pbbs::sequence<mypair<T, T>> in(n);
 
   std::string uni ("uniform");
@@ -487,10 +484,9 @@ double t_sort_outplace_unstable(size_t n, const std::string distribution, const 
   char char_para[para.length() + 1];
   strcpy(char_para, para.c_str());
 
-  // if (strcmp(distribution, "uniform") == 0) {
   if (uni.compare(distribution) == 0) {
-    uint64_t uniform_max_range = atoi(char_para);
-    uniform_generator_int64_(in, n, uniform_max_range);
+    uint64_t uniform_max = atoi(char_para);
+    uniform_generator_int64_(in, n, uniform_max);
   } 
   else if (exp.compare(distribution) == 0) {
     double exp_lambda = stod(para);
@@ -511,7 +507,6 @@ double t_sort_outplace_unstable(size_t n, const std::string distribution, const 
 
 template<typename T>
 double t_sort_outplace_stable(size_t n, const std::string distribution, const std::string para, bool check) {
-  // pbbs::random r(0);
   pbbs::sequence<mypair<T, T>> in(n);
 
   std::string uni ("uniform");
@@ -521,38 +516,28 @@ double t_sort_outplace_stable(size_t n, const std::string distribution, const st
   char char_para[para.length() + 1];
   strcpy(char_para, para.c_str());
 
-  // if (strcmp(distribution, "uniform") == 0) {
   if (uni.compare(distribution) == 0) {
-    uint64_t uniform_max_range = atoi(char_para);
-    // cout << "Uniform distribution (64bit key, 64bit value)..." << endl;
-    // cout << "Uniform parameter = " << uniform_max_range << endl;
-    uniform_generator_int64_(in, n, uniform_max_range);
+    uint64_t uniform_max = atoi(char_para);
+    uniform_generator_int64_(in, n, uniform_max);
   } 
   else if (exp.compare(distribution) == 0) {
     double exp_lambda = stod(para);
-    // cout << "Exponential distribution (64bit key, 64bit value)..." << endl;
-    // cout << "Exponential parameter = " << exp_lambda << endl;
     exponential_generator_int64_(in, n, 1000000, exp_lambda);
   } 
   else if (zipf.compare(distribution) == 0) {
     uint32_t zipfian_s = stod(para);
-    // cout << "Zipfian distribution (64bit key, 64bit value)..." << endl;
-    // cout << "Zipfian parameter = " << zipfian_s << endl;
     zipfian_generator_int64_(in, n, zipfian_s);
   }
   pbbs::sequence<mypair<T, T>> out;
   time(t, out = pbbs::sample_sort(in, [&] (mypair<T, T> a, mypair<T, T> b) {
                   return a.first < b.first;
                 }, true););
-  // if (check) check_sort_pair(in, out, [&] (mypair<T, T> a, mypair<T, T> b) {
-  //                                       return a.first < b.first;
-  //                                     }, "sample sort out-of-place and stable");
+  
   return t;
 }
 
 template<typename T>
 double t_sort_inplace_stable(size_t n, const std::string distribution, const std::string para, bool check) {
-  // pbbs::random r(0);
   pbbs::sequence<mypair<T, T>> in(n);
 
   std::string uni ("uniform");
@@ -562,10 +547,9 @@ double t_sort_inplace_stable(size_t n, const std::string distribution, const std
   char char_para[para.length() + 1];
   strcpy(char_para, para.c_str());
 
-  // if (strcmp(distribution, "uniform") == 0) {
   if (uni.compare(distribution) == 0) {
-    uint64_t uniform_max_range = atoi(char_para);
-    uniform_generator_int64_(in, n, uniform_max_range);
+    uint64_t uniform_max = atoi(char_para);
+    uniform_generator_int64_(in, n, uniform_max);
   } 
   else if (exp.compare(distribution) == 0) {
     double exp_lambda = stod(para);
@@ -575,11 +559,6 @@ double t_sort_inplace_stable(size_t n, const std::string distribution, const std
     uint32_t zipfian_s = stod(para);
     zipfian_generator_int64_(in, n, zipfian_s);
   }
-  // pbbs::sequence<mypair<T, T>> out;
-  // mypair<T, T>* in_ = new mypair<T, T>[n];
-  // parallel_for (0, n, [&] (size_t j) {
-  //   in_[j] = in[j];
-  // });
   time(t, pbbs::sample_sort(in.begin(), n, [&] (mypair<T, T> a, mypair<T, T> b) {
               return a.first < b.first;
           }, true););
@@ -589,7 +568,6 @@ double t_sort_inplace_stable(size_t n, const std::string distribution, const std
 
 template<typename T>
 double t_sort_inplace_unstable(size_t n, const std::string distribution, const std::string para, bool check) {
-  // pbbs::random r(0);
   pbbs::sequence<mypair<T, T>> in(n);
 
   std::string uni ("uniform");
@@ -599,10 +577,9 @@ double t_sort_inplace_unstable(size_t n, const std::string distribution, const s
   char char_para[para.length() + 1];
   strcpy(char_para, para.c_str());
 
-  // if (strcmp(distribution, "uniform") == 0) {
   if (uni.compare(distribution) == 0) {
-    uint64_t uniform_max_range = atoi(char_para);
-    uniform_generator_int64_(in, n, uniform_max_range);
+    uint64_t uniform_max = atoi(char_para);
+    uniform_generator_int64_(in, n, uniform_max);
   } 
   else if (exp.compare(distribution) == 0) {
     double exp_lambda = stod(para);
@@ -612,11 +589,6 @@ double t_sort_inplace_unstable(size_t n, const std::string distribution, const s
     uint32_t zipfian_s = stod(para);
     zipfian_generator_int64_(in, n, zipfian_s);
   }
-  // pbbs::sequence<mypair<T, T>> out;
-  // mypair<T, T>* in_ = new mypair<T, T>[n];
-  // parallel_for (0, n, [&] (size_t j) {
-  //   in_[j] = in[j];
-  // });
   time(t, pbbs::sample_sort(in.begin(), n, [&] (mypair<T, T> a, mypair<T, T> b) {
               return a.first < b.first;
           }););
