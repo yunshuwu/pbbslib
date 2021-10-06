@@ -304,6 +304,326 @@ double t_sort(size_t n, bool check) {
   return t;
 }
 
+template<typename K, typename V>
+struct mypair {
+    K first;
+    V second;
+};
+
+#define THRESHOLDS 10000
+
+void scan_inplace__ (uint32_t* in, uint32_t n) {
+    if (n <= THRESHOLDS) {
+        // cout << "THRESHOLDS: " << THRESHOLDS << endl;
+        for (size_t i = 1;i < n;i++) {
+            in[i] += in[i-1];
+        }
+        return;
+    }
+    uint32_t root_n = (uint32_t)sqrt(n);// split the array into root n blocks
+    uint32_t* offset = new uint32_t[root_n-1];   
+    
+    parallel_for (0, root_n-1, [&] (size_t i) {
+        offset[i] = 0;
+        for (size_t j = i*root_n;j < (i+1)*root_n;j++) {
+            offset[i] += in[j];
+        }
+    });
+
+    for (size_t i = 1;i < root_n-1;i++) offset[i] += offset[i-1];
+
+    // prefix sum for each subarray
+    parallel_for (0, root_n, [&] (size_t i) {
+        if (i == root_n-1) {// the last one
+            for (size_t j = i*root_n+1;j < n;j++) {
+                in[j] += in[j-1];
+            }
+        } else {
+            for (size_t j = i*root_n+1;j < (i+1)*root_n;j++) {
+                in[j] += in[j-1];
+            }
+        }
+    });
+
+    parallel_for (1, root_n, [&] (size_t i) {
+        if (i == root_n-1)  {
+            for (size_t j = i * root_n;j < n;j++){
+                in[j] += offset[i-1];
+            }
+        } else {
+            for (size_t j = i * root_n;j < (i+1)*root_n;j++) {
+                in[j] +=  offset[i-1];
+            }
+        }
+    });
+
+    delete[] offset;
+}
+
+void uniform_generator_int64_ (pbbs::sequence<mypair<uint64_t, uint64_t>>& A, // mypair<uint64_t, uint64_t>* A, 
+                               int n, uint64_t uniform_max_range) {
+    parallel_for (0, n, [&] (uint32_t i){
+        // in order to put all keys in range [0, uniform_max_range]
+        A[i].first = pbbs::hash64_2(i) % uniform_max_range; 
+        if (A[i].first > uniform_max_range) A[i].first -= uniform_max_range;
+        if (A[i].first > uniform_max_range) cout << "wrong..." << endl;
+        A[i].first = pbbs::hash64_2(A[i].first);
+        A[i].second = pbbs::hash64_2(i);
+    }, 1);
+}
+
+void exponential_generator_int64_ (pbbs::sequence<mypair<uint64_t, uint64_t>>& A, // mypair<uint64_t, uint64_t>* A, 
+                                  int n, int exp_cutoff, double exp_lambda) { 
+    pbbs::sequence<uint32_t> nums(exp_cutoff);
+    pbbs::sequence<mypair<uint64_t, uint64_t>> B(n);
+    // double base = 1 - exp(-1);
+    // cout << "1 - e^-1 = " << base << endl;
+    // cout << "e^-2 = " << exp(-2) << endl;
+
+    /* 1. making nums[] array */
+    parallel_for (0, exp_cutoff, [&] (int i) {
+    // for (int i = 0; i < exp_cutoff; i++) {
+        nums[i] = (double)n * (exp(-exp_lambda * i) * (1 - exp(-exp_lambda)));
+        // cout << nums[i] << endl;
+    // }
+    }, 1);
+
+    double offset = pbbs::reduce(nums, pbbs::addm<uint32_t>());
+    nums[0] += (n - offset);
+    // cout << "offset/n = " << offset << "/" << n << endl;
+    // checking if the sum of nums[] equals to n
+    // if (pbbs::reduce(nums, pbbs::addm<uint32_t>()) == (uint32_t)n) {
+    //     cout << "sum of nums[] == n" << endl;
+    // }
+
+    /* 2. scan to calculate position */ 
+    uint32_t* addr = new uint32_t[exp_cutoff];
+    parallel_for (0, exp_cutoff, [&] (uint32_t i) {
+        addr[i] = nums[i];
+    }, 1);
+    scan_inplace__(addr, exp_cutoff); // store all addresses into addr[]
+
+    /* 3. distribute random numbers into A[i].first */
+    parallel_for (0, exp_cutoff, [&] (size_t i) {
+        size_t st = (i == 0) ? 0 : addr[i-1],
+               ed = (i == (uint32_t)exp_cutoff-1) ? n : addr[i];
+        for (size_t j = st; j < ed; j++) {
+            B[j].first = pbbs::hash64_2(i);
+        }
+    }, 1);
+    parallel_for (0, n, [&] (size_t i){
+        B[i].second = pbbs::hash64_2(i);
+    }, 1);
+
+    /* 4. shuffle the keys */
+    pbbs::sequence<mypair<uint64_t, uint64_t>> C = pbbs::random_shuffle(B, n);
+
+    parallel_for (0, n, [&] (size_t i) {
+        A[i] = C[i];
+    });
+
+    delete[] addr;
+}
+
+void zipfian_generator_int64_ (pbbs::sequence<mypair<uint64_t, uint64_t>>& A, // mypair<uint64_t, uint64_t> *A, 
+                               int n, uint32_t zipf_s) {
+    pbbs::sequence<uint32_t> nums(zipf_s); // in total zipf_s kinds of keys
+    pbbs::sequence<mypair<uint64_t, uint64_t>> B(n);
+    
+    /* 1. making nums[] array */
+    uint32_t number = (uint32_t) (n / log(n)); // number= n/ln(n)
+    parallel_for (0, zipf_s, [&] (uint32_t i) {
+        nums[i] = (uint32_t) (number / (i+1));
+    }, 1);
+
+    uint32_t offset = pbbs::reduce(nums, pbbs::addm<uint32_t>()); // cout << "offset = " << offset << endl;
+    // nums[zipf_s-1] += (n - offset);
+    nums[0] += (n - offset);
+
+    // checking if the sum of nums[] equals to n
+    // if (pbbs::reduce(nums, pbbs::addm<uint32_t>()) == (uint32_t)n) {
+    //     cout << "sum of nums[] == n" << endl;
+    // }
+
+    /* 2. scan to calculate position */ 
+    // pbbs::sequence<uint32_t> addr(zipf_s);
+    uint32_t* addr = new uint32_t[zipf_s];
+    parallel_for (0, zipf_s, [&] (uint32_t i) {
+        addr[i] = nums[i];
+    }, 1);
+    scan_inplace__(addr, zipf_s); // store all addresses into addr[]
+    
+    /* 3. distribute random numbers into A[i].first */
+    parallel_for (0, zipf_s, [&] (size_t i) {
+        uint32_t st = (i == 0) ? 0 : addr[i-1],
+                 ed = (i == zipf_s-1) ? n : addr[i];
+        for (uint32_t j = st; j < ed; j++) {
+            B[j].first = pbbs::hash64_2(i);
+        }
+    }, 1);
+    parallel_for (0, n, [&] (size_t i){
+        B[i].second = pbbs::hash64_2(i);
+    }, 1);
+
+    /* 4. shuffle the keys */
+    pbbs::sequence<mypair<uint64_t, uint64_t>> C = pbbs::random_shuffle(B, n);
+
+    parallel_for (0, n, [&] (size_t i) {
+        A[i] = C[i];
+    });
+
+    delete[] addr;
+}
+
+template<typename T>
+double t_sort_outplace_unstable(size_t n, const std::string distribution, const std::string para, bool check) {
+  // pbbs::random r(0);
+  pbbs::sequence<mypair<T, T>> in(n);
+
+  std::string uni ("uniform");
+  std::string exp ("exponential");
+  std::string zipf ("zipfian");
+
+  char char_para[para.length() + 1];
+  strcpy(char_para, para.c_str());
+
+  // if (strcmp(distribution, "uniform") == 0) {
+  if (uni.compare(distribution) == 0) {
+    uint64_t uniform_max_range = atoi(char_para);
+    uniform_generator_int64_(in, n, uniform_max_range);
+  } 
+  else if (exp.compare(distribution) == 0) {
+    double exp_lambda = stod(para);
+    exponential_generator_int64_(in, n, 1000000, exp_lambda);
+  } 
+  else if (zipf.compare(distribution) == 0) {
+    uint32_t zipfian_s = stod(para);
+    zipfian_generator_int64_(in, n, zipfian_s);
+  }
+  pbbs::sequence<mypair<T, T>> out;
+  time(t, out = pbbs::sample_sort(in, [&] (mypair<T, T> a, mypair<T, T> b) {
+                  return a.first < b.first;
+                }););
+
+  return t;
+}
+
+
+template<typename T>
+double t_sort_outplace_stable(size_t n, const std::string distribution, const std::string para, bool check) {
+  // pbbs::random r(0);
+  pbbs::sequence<mypair<T, T>> in(n);
+
+  std::string uni ("uniform");
+  std::string exp ("exponential");
+  std::string zipf ("zipfian");
+
+  char char_para[para.length() + 1];
+  strcpy(char_para, para.c_str());
+
+  // if (strcmp(distribution, "uniform") == 0) {
+  if (uni.compare(distribution) == 0) {
+    uint64_t uniform_max_range = atoi(char_para);
+    // cout << "Uniform distribution (64bit key, 64bit value)..." << endl;
+    // cout << "Uniform parameter = " << uniform_max_range << endl;
+    uniform_generator_int64_(in, n, uniform_max_range);
+  } 
+  else if (exp.compare(distribution) == 0) {
+    double exp_lambda = stod(para);
+    // cout << "Exponential distribution (64bit key, 64bit value)..." << endl;
+    // cout << "Exponential parameter = " << exp_lambda << endl;
+    exponential_generator_int64_(in, n, 1000000, exp_lambda);
+  } 
+  else if (zipf.compare(distribution) == 0) {
+    uint32_t zipfian_s = stod(para);
+    // cout << "Zipfian distribution (64bit key, 64bit value)..." << endl;
+    // cout << "Zipfian parameter = " << zipfian_s << endl;
+    zipfian_generator_int64_(in, n, zipfian_s);
+  }
+  pbbs::sequence<mypair<T, T>> out;
+  time(t, out = pbbs::sample_sort(in, [&] (mypair<T, T> a, mypair<T, T> b) {
+                  return a.first < b.first;
+                }, true););
+  // if (check) check_sort_pair(in, out, [&] (mypair<T, T> a, mypair<T, T> b) {
+  //                                       return a.first < b.first;
+  //                                     }, "sample sort out-of-place and stable");
+  return t;
+}
+
+template<typename T>
+double t_sort_inplace_stable(size_t n, const std::string distribution, const std::string para, bool check) {
+  // pbbs::random r(0);
+  pbbs::sequence<mypair<T, T>> in(n);
+
+  std::string uni ("uniform");
+  std::string exp ("exponential");
+  std::string zipf ("zipfian");
+
+  char char_para[para.length() + 1];
+  strcpy(char_para, para.c_str());
+
+  // if (strcmp(distribution, "uniform") == 0) {
+  if (uni.compare(distribution) == 0) {
+    uint64_t uniform_max_range = atoi(char_para);
+    uniform_generator_int64_(in, n, uniform_max_range);
+  } 
+  else if (exp.compare(distribution) == 0) {
+    double exp_lambda = stod(para);
+    exponential_generator_int64_(in, n, 1000000, exp_lambda);
+  } 
+  else if (zipf.compare(distribution) == 0) {
+    uint32_t zipfian_s = stod(para);
+    zipfian_generator_int64_(in, n, zipfian_s);
+  }
+  // pbbs::sequence<mypair<T, T>> out;
+  // mypair<T, T>* in_ = new mypair<T, T>[n];
+  // parallel_for (0, n, [&] (size_t j) {
+  //   in_[j] = in[j];
+  // });
+  time(t, pbbs::sample_sort(in.begin(), n, [&] (mypair<T, T> a, mypair<T, T> b) {
+              return a.first < b.first;
+          }, true););
+
+  return t;
+}
+
+template<typename T>
+double t_sort_inplace_unstable(size_t n, const std::string distribution, const std::string para, bool check) {
+  // pbbs::random r(0);
+  pbbs::sequence<mypair<T, T>> in(n);
+
+  std::string uni ("uniform");
+  std::string exp ("exponential");
+  std::string zipf ("zipfian");
+
+  char char_para[para.length() + 1];
+  strcpy(char_para, para.c_str());
+
+  // if (strcmp(distribution, "uniform") == 0) {
+  if (uni.compare(distribution) == 0) {
+    uint64_t uniform_max_range = atoi(char_para);
+    uniform_generator_int64_(in, n, uniform_max_range);
+  } 
+  else if (exp.compare(distribution) == 0) {
+    double exp_lambda = stod(para);
+    exponential_generator_int64_(in, n, 1000000, exp_lambda);
+  } 
+  else if (zipf.compare(distribution) == 0) {
+    uint32_t zipfian_s = stod(para);
+    zipfian_generator_int64_(in, n, zipfian_s);
+  }
+  // pbbs::sequence<mypair<T, T>> out;
+  // mypair<T, T>* in_ = new mypair<T, T>[n];
+  // parallel_for (0, n, [&] (size_t j) {
+  //   in_[j] = in[j];
+  // });
+  time(t, pbbs::sample_sort(in.begin(), n, [&] (mypair<T, T> a, mypair<T, T> b) {
+              return a.first < b.first;
+          }););
+
+  return t;
+}
+
 // no check since it is used for the sort for checking, and hence
 // checked against the other sorts
 template<typename T>
