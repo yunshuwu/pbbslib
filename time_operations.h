@@ -500,7 +500,9 @@ double t_sort_outplace_unstable(size_t n, const std::string distribution, const 
   time(t, out = pbbs::sample_sort(in, [&] (mypair<T, T> a, mypair<T, T> b) {
                   return a.first < b.first;
                 }););
-
+  
+  if(check) cout << "checking..." << endl;
+  
   return t;
 }
 
@@ -533,6 +535,8 @@ double t_sort_outplace_stable(size_t n, const std::string distribution, const st
                   return a.first < b.first;
                 }, true););
   
+  if(check) cout << "checking..." << endl;
+  
   return t;
 }
 
@@ -562,7 +566,12 @@ double t_sort_inplace_stable(size_t n, const std::string distribution, const std
   time(t, pbbs::sample_sort(in.begin(), n, [&] (mypair<T, T> a, mypair<T, T> b) {
               return a.first < b.first;
           }, true););
-
+  // time(t, pbbs::sample_sort_inplace(in.slice(), [&] (mypair<T, T> a, mypair<T, T> b) {
+  //             return a.first < b.first;
+  //         }, true););
+  
+  if(check) cout << "checking..." << endl;
+  
   return t;
 }
 
@@ -592,6 +601,11 @@ double t_sort_inplace_unstable(size_t n, const std::string distribution, const s
   time(t, pbbs::sample_sort(in.begin(), n, [&] (mypair<T, T> a, mypair<T, T> b) {
               return a.first < b.first;
           }););
+  // time(t, pbbs::sample_sort_inplace(in.slice(), [&] (mypair<T, T> a, mypair<T, T> b) {
+  //             return a.first < b.first;
+  //         }););
+
+  if(check) cout << "checking..." << endl;
 
   return t;
 }

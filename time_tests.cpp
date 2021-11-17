@@ -433,7 +433,7 @@ int main (int argc, char *argv[]) {
   else cout << "half length off" << endl;
 
   if (test_num == -1)
-    for (int i=0; i < num_tests; i++)
+    for (int i=56; i < num_tests; i++)
       pick_test(i,n,rounds,half_length);
   else pick_test(test_num,n,rounds,half_length);
   //my_mem_pool.sizes();
